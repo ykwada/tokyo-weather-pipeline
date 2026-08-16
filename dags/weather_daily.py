@@ -1,24 +1,24 @@
-from airflow.sdk import dag, task
-from datetime import datetime, timedelta
-import requests
 import json
 import os
-import pandas as pd
+from datetime import datetime, timedelta
+
 import duckdb
+import pandas as pd
+import requests
 from airflow.providers.standard.operators.bash import BashOperator
+from airflow.sdk import dag, task
 
 DBT_DIR = "/opt/airflow/dbt"
 
+
 @dag(
     schedule="@daily",
-    start_date=datetime(2026, 7, 20),   # 過去にするとbackfill練習ができる
+    start_date=datetime(2026, 7, 20),  # 過去にするとbackfill練習ができる
     catchup=True,
-    default_args={"retries": 1, 'retry_delay': timedelta(seconds=30)},
+    default_args={"retries": 1, "retry_delay": timedelta(seconds=30)},
     max_active_runs=1,
 )
 def weather_daily():
-   
-
     dbt_run_task = BashOperator(
         task_id="dbt_run",
         bash_command=f"dbt run --project-dir {DBT_DIR} --profiles-dir {DBT_DIR}",
@@ -29,24 +29,23 @@ def weather_daily():
         retries=0,
     )
 
-
     @task
     def fetch_weather(ds=None) -> str:
         # 戻り値はファイルパス(これがXCom経由で次に渡る)
 
-        url="https://api.open-meteo.com/v1/forecast"
-        
+        url = "https://api.open-meteo.com/v1/forecast"
+
         response = requests.get(
             url,
             params={
-                'latitude':'35',
-                'longitude':'139',
-                'hourly':'temperature_2m',
-                'timezone':'Asia/Tokyo',
-                'start_date':ds,
-                'end_date':ds,
-                }
-            )
+                "latitude": "35",
+                "longitude": "139",
+                "hourly": "temperature_2m",
+                "timezone": "Asia/Tokyo",
+                "start_date": ds,
+                "end_date": ds,
+            },
+        )
         response.raise_for_status()
         data = response.json()
 
@@ -70,10 +69,10 @@ def weather_daily():
         for key in required_keys:
             if key not in data:
                 raise ValueError(f"missing key: {key}")
-            
+
         if not isinstance(data["hourly"], dict):
             raise ValueError("hourly must be an object")
-            
+
         return path
 
     @task
@@ -82,19 +81,18 @@ def weather_daily():
         save_path = f"/opt/airflow/data/transformed/transformed_{ds}.csv"
         dirname = os.path.dirname(save_path)
         os.makedirs(dirname, exist_ok=True)
-        
-        with open(path, encoding='utf-8') as f:
+
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
         df = pd.DataFrame(d["hourly"])
         # column1=time, type:string (ISO8601 format, e.g. 2026-07-24T00:00)
         # column2=temperature_2m, type:float
         df.to_csv(save_path, index=False)
         return save_path
-    
+
     @task
     def load_to_db(path: str, ds=None) -> None:
-
-        db_path = f"/opt/airflow/data/warehouse/forecast.db"
+        db_path = "/opt/airflow/data/warehouse/forecast.db"
         dirname = os.path.dirname(db_path)
         os.makedirs(dirname, exist_ok=True)
 
@@ -112,22 +110,27 @@ def weather_daily():
                 created_at TIMESTAMP DEFAULT current_timestamp
             )
         """)
-        conn.execute(f"""
+        conn.execute(
+            f"""
             DELETE FROM {table}
             WHERE ds = ?
-            """, [ds]
+            """,
+            [ds],
         )
 
         df_new = pd.read_csv(path)
         conn.register("tmp_df", df_new)
-        conn.execute(f"""
+        conn.execute(
+            f"""
             INSERT INTO {table} (date, temperature, ds)
             SELECT 
                 time AS date,
                 temperature_2m AS temperature,
                 ? AS ds
             FROM tmp_df
-            """, [ds])
+            """,
+            [ds],
+        )
         conn.unregister("tmp_df")
 
         print(f"loading {path} for {ds}")
@@ -136,5 +139,6 @@ def weather_daily():
 
     loaded = load_to_db(transform(validate_raw(fetch_weather())))
     loaded >> dbt_run_task >> dbt_test_task
+
 
 weather_daily()
