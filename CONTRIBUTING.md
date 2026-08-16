@@ -8,6 +8,7 @@ feature branches and pull requests.
 - `feature/<issue>-<description>` — new functionality
 - `fix/<issue>-<description>` — bug fixes
 - `docs/<description>` — documentation only
+- `chore/<description>` — maintenance tasks
 
 ## Commit conventions
 
