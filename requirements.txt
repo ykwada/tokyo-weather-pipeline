@@ -3,3 +3,5 @@ duckdb
 requests
 dbt-core
 dbt-duckdb
+ruff
+pre-commit
